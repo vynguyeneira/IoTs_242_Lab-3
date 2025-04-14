@@ -13,7 +13,8 @@
 // Firmware title and version used to compare with remote version, to check if an update is needed.
 // Title needs to be the same and version needs to be different --> downgrading is possible
 constexpr char CURRENT_FIRMWARE_TITLE[] = "Firmware DHT20";
-constexpr char CURRENT_FIRMWARE_VERSION[] = "1.1";
+//constexpr char CURRENT_FIRMWARE_VERSION[] = "1.1";
+constexpr char CURRENT_FIRMWARE_VERSION[] = "2.1";
 // Maximum amount of retries we attempt to download each firmware chunck over MQTT
 constexpr uint8_t FIRMWARE_FAILURE_RETRIES = 12U;
 // Size of each firmware chunck downloaded over MQTT,
@@ -29,9 +30,11 @@ constexpr char TOKEN[] = "1tqsqvh62gmcrj1yf0w7";
 constexpr char THINGSBOARD_SERVER[] = "app.coreiot.io";
 constexpr uint16_t THINGSBOARD_PORT = 1883U;
 
+constexpr uint16_t MAX_MESSAGE_SEND_SIZE = 512U;
+constexpr uint16_t MAX_MESSAGE_RECEIVE_SIZE = 512U;
+
 WiFiClient wifiClient;
 Arduino_MQTT_Client mqttClient(wifiClient);
-ThingsBoard tb(mqttClient, MAX_MESSAGE_SIZE);
 
 // Initialize used apis
 OTA_Firmware_Update<> ota;
@@ -42,6 +45,8 @@ const std::array<IAPI_Implementation *, 3U> apis = {
     &shared_update,
     &attr_request,
     &ota};
+// Initialize ThingsBoard instance with the maximum needed buffer size
+ThingsBoard tb(mqttClient, MAX_MESSAGE_RECEIVE_SIZE, MAX_MESSAGE_SEND_SIZE, Default_Max_Stack_Size, apis);
 // Initalize the Updater client instance used to flash binary to flash memory
 Espressif_Updater<> updater;
 // Statuses for updating
@@ -163,19 +168,19 @@ void TaskTemp(void *pvParameters)
   }
 }
 
-// void TaskHumi(void *pvParameters)
-// {
-//   while (1) // not read data again to avoid reading too fast
-//   {
-//     float humidity = DHT.getHumidity();
-//     Serial.print("DHT20 Humidity: ");
-//     Serial.print(humidity, 1);
-//     Serial.println(" %");
-//     tb.sendTelemetryData("humidity", humidity);
+void TaskHumi(void *pvParameters)
+{
+  while (1) // not read data again to avoid reading too fast
+  {
+    float humidity = DHT.getHumidity();
+    Serial.print("DHT20 Humidity: ");
+    Serial.print(humidity, 1);
+    Serial.println(" %");
+    tb.sendTelemetryData("humidity", humidity);
 
-//     vTaskDelay(pdMS_TO_TICKS(1000)); // Delay 1000ms
-//   }
-// }
+    vTaskDelay(pdMS_TO_TICKS(1000)); // Delay 1000ms
+  }
+}
 
 void TaskTBConnection(void *pvParameters)
 {
@@ -192,8 +197,8 @@ void TaskTBConnection(void *pvParameters)
         Serial.println("Failed to connect");
         return;
       }
-      vTaskDelay(pdMS_TO_TICKS(10000)); // acceptable disconnected time with TB
     }
+    vTaskDelay(pdMS_TO_TICKS(10000)); // acceptable disconnected time with TB
   }
 }
 
@@ -241,7 +246,7 @@ void TaskTBLoop (void *pvParameters)
   while (1)
   {
     tb.loop();
-    vTaskDelay(pdMS_TO_TICKS(10));   //must be call continuously
+    vTaskDelay(pdMS_TO_TICKS(100));   //must be call continuously
   }
 }
 
@@ -255,22 +260,23 @@ void setup()
   InitWiFi();
 
   // Initialize DHT20
-  // if (!DHT.begin())
-  // {
-  //   Serial.println("Failed to initialize DHT20 sensor!");
-  //   while (1)
-  //     ;
-  // }
+
+  if (!DHT.begin())
+  {
+    Serial.println("Failed to initialize DHT20 sensor!");
+    while (1)
+      ;
+  }
   Serial.println("DHT20 sensor initialized.");
 
   // Create
   //  xTaskCreate(TaskHelloWorld, "HelloWorld", 1000, NULL, 1, &Task0Handle);
   xTaskCreate(TaskTemp, "Temperature", 2000, NULL, 1, &Task1Handle);
-  // xTaskCreate(TaskHumi, "Humidity", 2000, NULL, 1, &Task2Handle);
+  xTaskCreate(TaskHumi, "Humidity", 2000, NULL, 1, &Task2Handle);
   xTaskCreate(TaskOTAFirmwareUpdate, "OTA Fifmware Update", 4096, NULL, 1, &TaskOTAHandle);
-  xTaskCreate(TaskTBConnection, "Check Connection Thingsboard", 2048, NULL, 1, &Task3Handle);
+  xTaskCreate(TaskTBConnection, "Check Connection Thingsboard", 4096, NULL, 1, &Task3Handle);
   xTaskCreate(TaskWifiConnection, "Check Wifi", 2048, NULL, 1, &Task4Handle);
-  xTaskCreate(TaskTBLoop, "TB Loop", 2048, NULL, 1, &Task5Handle);
+  xTaskCreate(TaskTBLoop, "TB Loop", 4096, NULL, 1, &Task5Handle);
 }
 
 void loop()
